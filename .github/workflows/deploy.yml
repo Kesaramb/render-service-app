@@ -1,0 +1,90 @@
+name: Deploy Render Service to Cloud Run
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'render-service/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'render-service/**'
+
+env:
+  PROJECT_ID: canvascraft-us3rv
+  SERVICE_NAME: canvasmatic-render-service
+  REGION: us-central1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        project_id: ${{ env.PROJECT_ID }}
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        export_default_credentials: true
+
+    - name: Configure Docker
+      run: gcloud auth configure-docker
+
+    - name: Build Docker image
+      working-directory: ./render-service
+      run: |
+        docker build -t gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }} .
+        docker tag gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }} \
+          gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:latest
+
+    - name: Push Docker image
+      working-directory: ./render-service
+      run: |
+        docker push gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+        docker push gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:latest
+
+    - name: Deploy to Cloud Run
+      run: |
+        gcloud run deploy ${{ env.SERVICE_NAME }} \
+          --image gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }} \
+          --platform managed \
+          --region ${{ env.REGION }} \
+          --allow-unauthenticated \
+          --set-env-vars FIREBASE_PROJECT_ID="${{ env.PROJECT_ID }}" \
+          --set-env-vars FIREBASE_CLIENT_EMAIL="firebase-adminsdk-fbsvc@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
+          --set-env-vars NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET="${{ env.PROJECT_ID }}.appspot.com" \
+          --set-secrets=FIREBASE_PRIVATE_KEY=RENDER_SERVICE_FIREBASE_ADMIN_PRIVATE_KEY:latest \
+          --memory 2Gi \
+          --cpu 2 \
+          --max-instances 10 \
+          --timeout 300
+
+    - name: Get service URL
+      id: get-url
+      run: |
+        SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+          --platform managed \
+          --region ${{ env.REGION }} \
+          --format 'value(status.url)')
+        echo "service_url=$SERVICE_URL" >> $GITHUB_OUTPUT
+
+    - name: Comment PR with service URL
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: `🚀 Render service deployed to: ${{ steps.get-url.outputs.service_url }}`
+          })
+
+    - name: Output service URL
+      run: |
+        echo "✅ Render service deployed successfully!"
+        echo "🌐 Service URL: ${{ steps.get-url.outputs.service_url }}"
+        echo "🔗 Health check: ${{ steps.get-url.outputs.service_url }}/health"
+        echo "🎨 Render endpoint: ${{ steps.get-url.outputs.service_url }}/render" 
