@@ -1,52 +1,41 @@
-import express from 'express';
+import { Router } from 'express';
 import { RenderService } from '../services/renderService';
 
-const router = express.Router();
+const router = Router();
 const renderService = new RenderService();
 
 router.post('/', async (req, res) => {
-  const { fabricData, width, height, format = 'png', quality = 0.9, transparent = false } = req.body;
-
-  // Validation
-  if (!fabricData || !width || !height) {
-    return res.status(400).json({ 
-      error: 'Missing required fields: fabricData, width, height' 
-    });
-  }
-
-  if (typeof width !== 'number' || typeof height !== 'number' || width <= 0 || height <= 0) {
-    return res.status(400).json({ 
-      error: 'Invalid width or height. Must be positive numbers.' 
-    });
-  }
-
-  if (width > 4000 || height > 4000) {
-    return res.status(400).json({ 
-      error: 'Dimensions exceed maximum allowed (4000px).' 
-    });
-  }
-
   try {
+    const { fabricData, width, height, format, quality, transparent } = req.body;
+
+    // Validate required fields
+    if (!fabricData || !width || !height) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        required: ['fabricData', 'width', 'height'],
+        received: { fabricData: !!fabricData, width, height }
+      });
+    }
+
     const result = await renderService.renderImage({
       fabricData,
       width,
       height,
-      format,
-      quality,
-      transparent
+      format: format || 'png',
+      quality: quality || 0.9,
+      transparent: transparent || false
     });
 
-    res.status(200).json({
+    res.json({
       success: true,
-      imageUrl: result.imageUrl,
-      filename: result.filename
+      data: result
     });
 
-  } catch (error: any) {
+  } catch (error) {
     console.error('Render error:', error);
     res.status(500).json({
-      error: 'Image generation failed',
-      message: error.message || String(error)
+      error: 'Render failed',
+      message: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });

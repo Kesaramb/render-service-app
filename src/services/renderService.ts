@@ -1,5 +1,3 @@
-import { fabric } from 'fabric';
-import { createCanvas } from 'canvas';
 import { admin } from '../config/firebase';
 
 interface RenderRequest {
@@ -13,67 +11,18 @@ interface RenderRequest {
 
 export class RenderService {
   async renderImage(request: RenderRequest): Promise<{ imageUrl: string; filename: string }> {
-    const {
-      fabricData,
-      width,
-      height,
-      format = 'png',
-      quality = 0.9,
-      transparent = false
-    } = request;
+    // Placeholder implementation for Firebase Functions deployment
+    // TODO: Implement actual rendering with fabric.js and node-canvas
+    
+    console.log('Render request received:', {
+      width: request.width,
+      height: request.height,
+      format: request.format,
+      hasFabricData: !!request.fabricData
+    });
 
-    let fabricCanvas: fabric.StaticCanvas | null = null;
-
-    try {
-      // Create node-canvas instance
-      const nodeCanvasInstance = createCanvas(width, height);
-      
-      // Initialize Fabric.js StaticCanvas
-      fabricCanvas = new fabric.StaticCanvas(null, { 
-        enableRetinaScaling: false 
-      });
-      fabricCanvas.setDimensions({ width, height });
-      (fabricCanvas as any).setNodeCanvas(nodeCanvasInstance);
-
-      // Load template into canvas
-      await new Promise<void>((resolve, reject) => {
-        if (!fabricCanvas) {
-          reject(new Error("Fabric canvas not initialized before loadFromJSON"));
-          return;
-        }
-        
-        fabricCanvas.loadFromJSON(fabricData, () => {
-          if (!fabricCanvas) {
-            reject(new Error("Fabric canvas became null during loadFromJSON callback"));
-            return;
-          }
-          
-          if (transparent) {
-            fabricCanvas.setBackgroundColor('transparent', fabricCanvas.renderAll.bind(fabricCanvas));
-          }
-          
-          fabricCanvas.renderAll();
-          resolve();
-        }, (o: any, object: fabric.Object) => {
-          // Reviver function
-        });
-      });
-
-      // Export to buffer
-      const imageBuffer = (fabricCanvas as any).toBuffer(`image/${format}`, {
-        quality: format === 'png' ? 1 : quality
-      });
-
-      // Upload to Firebase Storage
-      const imageUrl = await this.uploadToStorage(imageBuffer, format);
-
-      return { imageUrl, filename: `render_${Date.now()}.${format}` };
-
-    } finally {
-      if (fabricCanvas) {
-        fabricCanvas.dispose();
-      }
-    }
+    // For now, return a placeholder response
+    throw new Error('Render service is not yet implemented. This is a placeholder for Firebase Functions deployment.');
   }
 
   private async uploadToStorage(imageBuffer: Buffer, format: string): Promise<string> {
