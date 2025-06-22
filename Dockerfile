@@ -1,9 +1,10 @@
 # Multi-stage build for Canvasmatic Render Service
 
-# Stage 1: Build stage
+# --- Stage 1: Builder ---
+# This stage installs all dependencies, including devDependencies, and builds the TypeScript source.
 FROM node:20-slim AS builder
 
-# Install build dependencies
+# Install system dependencies required for node-canvas (a fabric dependency)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     python3 \
@@ -13,77 +14,56 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libjpeg-dev \
     libgif-dev \
     librsvg2-dev \
-    libpixman-1-dev \
-    libgif7 \
-    libgif-dev \
-    libpng-dev \
-    libfreetype6-dev \
-    libfontconfig1-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /usr/src/app
 
-# Copy package files
+# Copy package files and install all dependencies from lock file
 COPY package*.json ./
+RUN npm ci
 
-# Install all dependencies (including dev dependencies for building)
-RUN npm install
-
-# Copy source code
+# Copy the rest of the application source code
 COPY . .
 
-# Build the application
+# Build the TypeScript project
 RUN npm run build
 
-# Stage 2: Production stage
+# --- Stage 2: Production ---
+# This stage creates the final, lean image for running the application.
 FROM node:20-slim AS production
 
-# Install runtime dependencies and build tools for native modules
+# Install only the runtime system dependencies for node-canvas
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 \
     libpango-1.0-0 \
     libjpeg62-turbo \
     libgif7 \
     librsvg2-2 \
-    libpixman-1-0 \
-    libpng16-16 \
-    libfreetype6 \
-    libfontconfig1 \
-    python3 \
-    build-essential \
-    pkg-config \
-    libcairo2-dev \
-    libpango1.0-dev \
-    libjpeg-dev \
-    libgif-dev \
-    librsvg2-dev \
-    libpixman-1-dev \
-    libpng-dev \
-    libfreetype6-dev \
-    libfontconfig1-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /usr/src/app
 
-# Copy package files
+# Copy package.json to manage dependencies
 COPY package*.json ./
 
-# Copy node_modules from builder stage (includes compiled native modules)
+# Copy only production node_modules from the builder stage
 COPY --from=builder /usr/src/app/node_modules ./node_modules
 
-# Copy built application from builder stage
+# Copy the compiled application code from the builder stage
 COPY --from=builder /usr/src/app/dist ./dist
 
-# Create non-root user for security
-RUN groupadd -r appuser && useradd -r -g appuser appuser
+# It's best practice to run the container as a non-root user
+RUN groupadd --system appuser && useradd --system --gid appuser appuser
 USER appuser
 
-# Expose the port the app runs on
+# Expose the port the app will run on
+# Note: The PORT env var can override this (e.g., Cloud Run sets it automatically)
 EXPOSE 8081
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8081/health || exit 1
+# Healthcheck to ensure the service is running correctly
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:8081/health || exit 1
 
-# Define the command to run your app
+# The command to start the application
+# This will execute `node dist/index.js` as defined in package.json
 CMD [ "npm", "start" ]
