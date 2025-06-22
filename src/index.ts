@@ -3,7 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import dotenv from 'dotenv';
-import { renderRouter } from './routes/render';
+import renderRouter from './routes/render';
 import { healthRouter } from './routes/health';
 import { initializeFirebase } from './config/firebase';
 

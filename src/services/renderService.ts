@@ -36,9 +36,9 @@ export async function renderCanvas(fabricData: any, width: number, height: numbe
         canvas.renderAll();
         const stream = canvas.createPNGStream();
         const chunks: Buffer[] = [];
-        stream.on('data', (chunk) => chunks.push(chunk));
+        stream.on('data', (chunk: Buffer) => chunks.push(chunk));
         stream.on('end', () => resolve(Buffer.concat(chunks)));
-        stream.on('error', (err) => reject(err));
+        stream.on('error', (err: Error) => reject(err));
       });
     } catch (error) {
       reject(error);
