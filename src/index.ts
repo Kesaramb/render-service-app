@@ -3,11 +3,17 @@ import cors from 'cors';
 import { admin } from './config/firebase';
 import { getStorage } from 'firebase-admin/storage';
 import { fabric } from 'fabric';
-import 'fabric/dist/fabric.min'; // Ensures all Fabric classes are registered
+// import 'fabric/dist/fabric.min'; // Remove this import
 import { createCanvas, loadImage, Image } from 'canvas';
 import { v4 as uuidv4 } from 'uuid';
 // @ts-ignore
 import type { StaticCanvas } from 'fabric/fabric-impl';
+
+// Explicitly register standard Fabric classes and fromObject methods
+fabric.Image = fabric.Image;
+fabric.IText = fabric.IText;
+(fabric.Image as any).fromObject = (fabric.Image as any).fromObject;
+(fabric.IText as any).fromObject = (fabric.IText as any).fromObject;
 
 // Log module versions at startup
 console.log('[Startup] fabric version:', require('fabric/package.json').version);
