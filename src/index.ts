@@ -8,6 +8,10 @@ import { v4 as uuidv4 } from 'uuid';
 // @ts-ignore
 import type { StaticCanvas } from 'fabric/fabric-impl';
 
+// Log module versions at startup
+console.log('[Startup] fabric version:', require('fabric/package.json').version);
+console.log('[Startup] canvas version:', require('canvas/package.json').version);
+
 // Inject node-canvas into fabric for server-side rendering
 (fabric as any).Canvas = fabric.StaticCanvas;
 (fabric as any).nodeCanvas = createCanvas;
