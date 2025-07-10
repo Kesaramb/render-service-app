@@ -15,6 +15,12 @@ fabric.IText = fabric.IText;
 (fabric.Image as any).fromObject = (fabric.Image as any).fromObject;
 (fabric.IText as any).fromObject = (fabric.IText as any).fromObject;
 
+// Log fabric.Image and fabric.IText and their fromObject methods for debugging
+console.log('[Debug] fabric.Image:', fabric.Image);
+console.log('[Debug] fabric.Image.fromObject:', (fabric.Image as any).fromObject);
+console.log('[Debug] fabric.IText:', fabric.IText);
+console.log('[Debug] fabric.IText.fromObject:', (fabric.IText as any).fromObject);
+
 // Log module versions at startup
 console.log('[Startup] fabric version:', require('fabric/package.json').version);
 console.log('[Startup] canvas version:', require('canvas/package.json').version);
