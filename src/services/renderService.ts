@@ -1,28 +1,93 @@
 import { admin } from '../config/firebase';
+import { fabric } from 'fabric';
+import { createCanvas } from 'canvas';
 
 interface RenderRequest {
   fabricData: any;
   width: number;
   height: number;
-  format?: 'png' | 'jpeg' | 'webp';
+  format?: 'png' | 'jpeg';
   quality?: number;
   transparent?: boolean;
 }
 
 export class RenderService {
   async renderImage(request: RenderRequest): Promise<{ imageUrl: string; filename: string }> {
-    // Placeholder implementation for Firebase Functions deployment
-    // TODO: Implement actual rendering with fabric.js and node-canvas
-    
-    console.log('Render request received:', {
-      width: request.width,
-      height: request.height,
-      format: request.format,
-      hasFabricData: !!request.fabricData
-    });
+    try {
+      console.log('Starting render process:', {
+        width: request.width,
+        height: request.height,
+        format: request.format,
+        hasFabricData: !!request.fabricData
+      });
 
-    // For now, return a placeholder response
-    throw new Error('Render service is not yet implemented. This is a placeholder for Firebase Functions deployment.');
+      // Create a new canvas using node-canvas
+      const canvas = createCanvas(request.width, request.height);
+      
+      // Create a new Fabric.js canvas
+      const fabricCanvas = new fabric.StaticCanvas(null, {
+        width: request.width,
+        height: request.height
+      });
+
+      // Load the Fabric.js data onto the canvas
+      await new Promise<void>((resolve, reject) => {
+        fabricCanvas.loadFromJSON(request.fabricData, () => {
+          try {
+            // Set the background if specified
+            if (request.fabricData.background) {
+              fabricCanvas.setBackgroundColor(request.fabricData.background, () => {
+                fabricCanvas.renderAll();
+                resolve();
+              });
+            } else {
+              fabricCanvas.renderAll();
+              resolve();
+            }
+          } catch (error) {
+            reject(error);
+          }
+        });
+      });
+
+      // Convert Fabric.js canvas to node-canvas
+      const fabricNodeCanvas = fabricCanvas.getElement() as any;
+      const ctx = canvas.getContext('2d');
+      
+      // Draw the Fabric.js canvas onto our node-canvas
+      ctx.drawImage(fabricNodeCanvas, 0, 0);
+
+      // Convert canvas to buffer
+      let imageBuffer: Buffer;
+      const format = request.format || 'png';
+      
+      if (format === 'png') {
+        imageBuffer = canvas.toBuffer('image/png', {
+          compressionLevel: 9,
+          filters: canvas.PNG_FILTER_NONE,
+          backgroundIndex: request.transparent ? 0 : undefined
+        });
+      } else if (format === 'jpeg') {
+        imageBuffer = canvas.toBuffer('image/jpeg', {
+          quality: request.quality || 0.9,
+          progressive: true
+        });
+      } else {
+        throw new Error(`Unsupported format: ${format}. Only 'png' and 'jpeg' are supported.`);
+      }
+
+      // Upload to Firebase Storage
+      const imageUrl = await this.uploadToStorage(imageBuffer, format);
+      const filename = `render_${Date.now()}.${format}`;
+
+      console.log('Render completed successfully:', { filename, imageUrl });
+
+      return { imageUrl, filename };
+
+    } catch (error) {
+      console.error('Render error:', error);
+      throw new Error(`Failed to render image: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   }
 
   private async uploadToStorage(imageBuffer: Buffer, format: string): Promise<string> {
