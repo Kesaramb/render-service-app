@@ -58,23 +58,38 @@ app.post('/render', async (req, res) => {
 
   console.log(`[Render Service] Received render job for templateId: ${templateId} with dimensions ${width}x${height}`);
 
+  // Log all object types in the Fabric JSON
+  if (Array.isArray(fabricData?.objects)) {
+    const types = fabricData.objects.map((obj: any) => obj.type);
+    console.log('[Render Service] Fabric object types:', types);
+  } else {
+    console.warn('[Render Service] No objects array found in fabricData or not an array.');
+  }
+
   try {
     // 2. Initialize Fabric Canvas on Server
+    console.log('[Render Service] Initializing Fabric StaticCanvas...');
     const staticCanvas = new fabric.StaticCanvas(null, { width, height }) as StaticCanvas & { toBuffer: (...args: any[]) => Buffer };
     
     // 3. Load data and render
+    console.log('[Render Service] Loading Fabric JSON into canvas...');
     await new Promise<void>((resolve, reject) => {
       staticCanvas.loadFromJSON(fabricData, () => {
+        console.log('[Render Service] Canvas renderAll called.');
         staticCanvas.renderAll();
         resolve();
       }, (o: any, object: any) => {
-        // No-op for now
+        // Log each object as it's loaded
+        if (object && object.type) {
+          console.log(`[Render Service] Loaded object of type: ${object.type}`);
+        }
       });
     });
 
     console.log('[Render Service] Fabric data loaded and canvas rendered.');
 
     // 4. Convert to PNG buffer
+    console.log('[Render Service] Converting canvas to PNG buffer...');
     const buffer = staticCanvas.toBuffer({
         format: 'png',
         quality: 1,
@@ -84,6 +99,7 @@ app.post('/render', async (req, res) => {
     if (!admin) {
         throw new Error("Firebase Admin SDK not initialized. Check server logs and configuration.");
     }
+    console.log('[Render Service] Uploading image to Firebase Storage...');
     const bucket = getStorage(admin.app()).bucket();
     const fileName = `renders/${templateId}/${uuidv4()}.png`;
     const file = bucket.file(fileName);
@@ -98,17 +114,24 @@ app.post('/render', async (req, res) => {
     console.log(`[Render Service] Image uploaded to Firebase Storage at: ${fileName}`);
 
     // Get public URL
+    console.log('[Render Service] Generating signed URL for image...');
     const [publicUrl] = await file.getSignedUrl({
         action: 'read',
         expires: '03-09-2491'
     });
 
     // 6. Return public URL
+    console.log('[Render Service] Render process complete. Returning imageUrl.');
     res.status(200).json({ imageUrl: publicUrl });
 
   } catch (error) {
     console.error('[Render Service] --- RENDERING FAILED ---');
-    console.error(error);
+    if (error instanceof Error) {
+      console.error('[Render Service] Error message:', error.message);
+      console.error('[Render Service] Error stack:', error.stack);
+    } else {
+      console.error('[Render Service] Unknown error:', error);
+    }
     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred during rendering.';
     const errorStack = error instanceof Error ? error.stack : 'No stack available.';
     
@@ -116,7 +139,7 @@ app.post('/render', async (req, res) => {
       error: 'Failed to generate image.',
       details: {
         message: errorMessage,
-        stack: errorStack?.split('\n').slice(0, 5).join('\\n'),
+        stack: errorStack?.split('\n').slice(0, 10).join('\\n'),
       }
     });
   }
