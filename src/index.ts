@@ -3,9 +3,16 @@ import cors from 'cors';
 import { admin } from './config/firebase';
 import { getStorage } from 'firebase-admin/storage';
 import { fabric } from 'fabric';
+import { createCanvas, loadImage, Image } from 'canvas';
 import { v4 as uuidv4 } from 'uuid';
 // @ts-ignore
 import type { StaticCanvas } from 'fabric/fabric-impl';
+
+// Inject node-canvas into fabric for server-side rendering
+(fabric as any).Canvas = fabric.StaticCanvas;
+(fabric as any).nodeCanvas = createCanvas;
+(fabric as any).nodeImage = loadImage;
+(fabric as any).Image = Image;
 
 const app = express();
 const port = process.env.PORT || 8081;
