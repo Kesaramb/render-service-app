@@ -1,50 +1,124 @@
-import { fabric } from 'fabric';
-import { initializeCanvas, loadFonts } from '../config/canvas';
 import { admin } from '../config/firebase';
-import { v4 as uuidv4 } from 'uuid';
+import { fabric } from 'fabric';
+import { createCanvas } from 'canvas';
 
-async function uploadToStorage(imageBuffer: Buffer, format: string = 'png'): Promise<string> {
-  const bucketName = process.env.FIREBASE_STORAGE_BUCKET;
-  if (!bucketName) {
-    console.error("FIREBASE_STORAGE_BUCKET environment variable not set.");
-    throw new Error("Storage bucket is not configured.");
-  }
-
-  const bucket = admin.storage().bucket(bucketName);
-  const fileName = `renders/${uuidv4()}.${format}`;
-  const file = bucket.file(fileName);
-
-  await file.save(imageBuffer, {
-    metadata: {
-      contentType: `image/${format}`,
-      cacheControl: 'public, max-age=31536000', // Cache for 1 year
-    },
-    public: true, // Make the file public
-  });
-
-  return file.publicUrl();
+interface RenderRequest {
+  fabricData: any;
+  width: number;
+  height: number;
+  format?: 'png' | 'jpeg';
+  quality?: number;
+  transparent?: boolean;
 }
 
-export async function renderCanvas(fabricData: any, width: number, height: number): Promise<string> {
-  await loadFonts(); // Ensure custom fonts are loaded
-  
-  const canvas = initializeCanvas(width, height);
-
-  const buffer = await new Promise<Buffer>((resolve, reject) => {
+export class RenderService {
+  async renderImage(request: RenderRequest): Promise<{ imageUrl: string; filename: string }> {
     try {
-      canvas.loadFromJSON(fabricData, () => {
-        canvas.renderAll();
-        const stream = canvas.createPNGStream();
-        const chunks: Buffer[] = [];
-        stream.on('data', (chunk: Buffer) => chunks.push(chunk));
-        stream.on('end', () => resolve(Buffer.concat(chunks)));
-        stream.on('error', (err: Error) => reject(err));
+      console.log('Starting render process:', {
+        width: request.width,
+        height: request.height,
+        format: request.format,
+        hasFabricData: !!request.fabricData
       });
-    } catch (error) {
-      reject(error);
-    }
-  });
 
-  const imageUrl = await uploadToStorage(buffer, 'png');
-  return imageUrl;
+      // Create a new canvas using node-canvas
+      const canvas = createCanvas(request.width, request.height);
+      
+      // Create a new Fabric.js canvas
+      const fabricCanvas = new fabric.StaticCanvas(null, {
+        width: request.width,
+        height: request.height
+      });
+
+      // Load the Fabric.js data onto the canvas
+      await new Promise<void>((resolve, reject) => {
+        fabricCanvas.loadFromJSON(request.fabricData, () => {
+          try {
+            // Set the background if specified
+            if (request.fabricData.background) {
+              fabricCanvas.setBackgroundColor(request.fabricData.background, () => {
+                fabricCanvas.renderAll();
+                resolve();
+              });
+            } else {
+              fabricCanvas.renderAll();
+              resolve();
+            }
+          } catch (error) {
+            reject(error);
+          }
+        });
+      });
+
+      // Convert Fabric.js canvas to node-canvas
+      const fabricNodeCanvas = fabricCanvas.getElement() as any;
+      const ctx = canvas.getContext('2d');
+      
+      // Draw the Fabric.js canvas onto our node-canvas
+      ctx.drawImage(fabricNodeCanvas, 0, 0);
+
+      // Convert canvas to buffer
+      let imageBuffer: Buffer;
+      const format = request.format || 'png';
+      
+      if (format === 'png') {
+        imageBuffer = canvas.toBuffer('image/png', {
+          compressionLevel: 9,
+          filters: canvas.PNG_FILTER_NONE,
+          backgroundIndex: request.transparent ? 0 : undefined
+        });
+      } else if (format === 'jpeg') {
+        imageBuffer = canvas.toBuffer('image/jpeg', {
+          quality: request.quality || 0.9,
+          progressive: true
+        });
+      } else {
+        throw new Error(`Unsupported format: ${format}. Only 'png' and 'jpeg' are supported.`);
+      }
+
+      // Upload to Firebase Storage
+      const imageUrl = await this.uploadToStorage(imageBuffer, format);
+      const filename = `render_${Date.now()}.${format}`;
+
+      console.log('Render completed successfully:', { filename, imageUrl });
+
+      return { imageUrl, filename };
+
+    } catch (error) {
+      console.error('Render error:', error);
+      throw new Error(`Failed to render image: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private async uploadToStorage(imageBuffer: Buffer, format: string): Promise<string> {
+    if (!admin.apps.length || !admin.app().options.projectId) {
+      throw new Error("Firebase Admin SDK is not properly initialized. Cannot access Storage.");
+    }
+
+    const storage = admin.storage();
+    const bucketName = process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || admin.app().options.storageBucket;
+
+    if (!bucketName) {
+      throw new Error("Firebase Storage bucket name is not configured.");
+    }
+
+    const bucket = storage.bucket(bucketName);
+    
+    // Using a simpler path for images generated by this service
+    const imageFileName = `render-service-output/${Date.now()}.${format}`;
+    const file = bucket.file(imageFileName);
+
+    await file.save(imageBuffer, {
+      metadata: { 
+        contentType: `image/${format}`,
+        cacheControl: 'public, max-age=31536000'
+      },
+      public: true,
+      resumable: false,
+    });
+    
+    await file.makePublic();
+    
+    return file.publicUrl();
+  }
 } 

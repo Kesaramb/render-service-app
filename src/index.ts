@@ -1,63 +1,116 @@
 import express from 'express';
 import cors from 'cors';
-import helmet from 'helmet';
-import morgan from 'morgan';
-import dotenv from 'dotenv';
-import renderRouter from './routes/render';
-import { healthRouter } from './routes/health';
-import { initializeFirebase } from './config/firebase';
-
-dotenv.config();
+import { admin } from './config/firebase';
+import { getStorage } from 'firebase-admin/storage';
+import { fabric } from 'fabric';
+import { v4 as uuidv4 } from 'uuid';
+// @ts-ignore
+import type { StaticCanvas } from 'fabric/fabric-impl';
 
 const app = express();
-const PORT = process.env.PORT || 8081;
+const port = process.env.PORT || 8081;
 
-// Initialize Firebase
-initializeFirebase();
+const allowedOrigins = [
+  'http://localhost:9002',
+  'https://canvasmatic.com',
+];
 
-// Middleware
-app.use(helmet());
-app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3000', 'http://localhost:9002'],
-  credentials: true
-}));
-app.use(morgan('combined'));
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true }));
+const corsOptions: cors.CorsOptions = {
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
+};
 
-// Routes
-app.use('/render', renderRouter);
-app.use('/health', healthRouter);
+app.use(cors(corsOptions));
+app.use(express.json({ limit: '10mb' }));
 
-// Root endpoint
-app.get('/', (req, res) => {
-  res.json({
-    service: 'Canvasmatic Render Service',
-    status: 'running',
-    version: '1.0.0',
-    timestamp: new Date().toISOString()
-  });
+app.get('/health', (req, res) => {
+  res.status(200).send({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Error handling middleware
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  console.error('Error:', err);
-  res.status(500).json({
-    error: 'Internal server error',
-    message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
-  });
+app.post('/render', async (req, res) => {
+  const { fabricData, width, height, templateId } = req.body;
+
+  // 1. Validate Input
+  if (!fabricData || !width || !height || !templateId) {
+    console.error('Render request missing required fields:', { fabricData: !!fabricData, width, height, templateId });
+    return res.status(400).json({ 
+      error: 'Bad Request: Missing fabricData, width, height, or templateId.',
+      details: `Received: fabricData=${!!fabricData}, width=${width}, height=${height}, templateId=${templateId}`
+    });
+  }
+
+  console.log(`[Render Service] Received render job for templateId: ${templateId} with dimensions ${width}x${height}`);
+
+  try {
+    // 2. Initialize Fabric Canvas on Server
+    const staticCanvas = new fabric.StaticCanvas(null, { width, height }) as StaticCanvas & { toBuffer: (...args: any[]) => Buffer };
+    
+    // 3. Load data and render
+    await new Promise<void>((resolve, reject) => {
+      staticCanvas.loadFromJSON(fabricData, () => {
+        staticCanvas.renderAll();
+        resolve();
+      }, (o: any, object: any) => {
+        // No-op for now
+      });
+    });
+
+    console.log('[Render Service] Fabric data loaded and canvas rendered.');
+
+    // 4. Convert to PNG buffer
+    const buffer = staticCanvas.toBuffer({
+        format: 'png',
+        quality: 1,
+    });
+    
+    // 5. Upload to Firebase Storage
+    if (!admin) {
+        throw new Error("Firebase Admin SDK not initialized. Check server logs and configuration.");
+    }
+    const bucket = getStorage(admin.app()).bucket();
+    const fileName = `renders/${templateId}/${uuidv4()}.png`;
+    const file = bucket.file(fileName);
+
+    await file.save(buffer, {
+      metadata: {
+        contentType: 'image/png',
+        cacheControl: 'public, max-age=31536000',
+      },
+    });
+    
+    console.log(`[Render Service] Image uploaded to Firebase Storage at: ${fileName}`);
+
+    // Get public URL
+    const [publicUrl] = await file.getSignedUrl({
+        action: 'read',
+        expires: '03-09-2491'
+    });
+
+    // 6. Return public URL
+    res.status(200).json({ imageUrl: publicUrl });
+
+  } catch (error) {
+    console.error('[Render Service] --- RENDERING FAILED ---');
+    console.error(error);
+    const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred during rendering.';
+    const errorStack = error instanceof Error ? error.stack : 'No stack available.';
+    
+    res.status(500).json({ 
+      error: 'Failed to generate image.',
+      details: {
+        message: errorMessage,
+        stack: errorStack?.split('\n').slice(0, 5).join('\\n'),
+      }
+    });
+  }
 });
 
-// 404 handler
-app.use('*', (req, res) => {
-  res.status(404).json({
-    error: 'Not found',
-    message: `Route ${req.method} ${req.originalUrl} not found`
-  });
-});
-
-app.listen(PORT, () => {
-  console.log(`Canvasmatic Render Service listening on port ${PORT}`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
-  console.log(`Render endpoint: http://localhost:${PORT}/render`);
+app.listen(port, () => {
+  console.log(`[Render Service] Server listening on port ${port}`);
 });
